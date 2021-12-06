@@ -111,19 +111,35 @@ if [[ $PARAMS_OK == "1" ]]; then
   exit 1
 fi
 
-# Create the run script.
-echo ""$CUR_DIR"/create_dht_reading \""$MONGODB_USERNAME"\" \""$MONGODB_PASSWORD"\" \""$MONGODB_HOSTNAME"\" \
-\""$DATABASE_NAME"\" \""$COLLECTION_NAME"\" \""$N_MINUTES_PER_DATAPOINT"\" \""$WIRING_PI_DHT_DATA_PIN"\"" > "$CUR_DIR"/run_create_dht_reading.sh
+# Clear old files.
+# Remove the old singleton file if possible.
+rm ~/.pi_sensor_data/dht.txt
 
-chmod +x "$CUR_DIR"/run_create_dht_reading.sh
+# Build the programs.
+# One to get the data.
+gcc -o get_dht_data ./get_dht_data.c -lwiringPi
+# And one to send it to the database.
+gcc -o send_dht_data ./send_dht_data.c $(pkg-config --libs --cflags libmongoc-1.0)
+
+
+# Create the run scripts.
+# One to get the data.
+echo "nohup "$CUR_DIR"/get_dht_data \""$WIRING_PI_DHT_DATA_PIN"\" >/dev/null 2>&1 &" > "$CUR_DIR"/run_get_dht_data.sh
+# And one to send it to the database.
+echo ""$CUR_DIR"/send_dht_data \""$MONGODB_USERNAME"\" \""$MONGODB_PASSWORD"\" \""$MONGODB_HOSTNAME"\" \
+\""$DATABASE_NAME"\" \""$COLLECTION_NAME"\" \""$N_MINUTES_PER_DATAPOINT"\"" > "$CUR_DIR"/run_send_dht_data.sh
+
+chmod +x "$CUR_DIR"/run_get_dht_data.sh
+chmod +x "$CUR_DIR"/run_send_dht_data.sh
 
 # Get the current directory.
 CUR_PATH=$(pwd)
 
-# Build the program.
-gcc -o create_dht_reading ./create_dht_reading.c ./send_sensor_data.h ./send_sensor_data.c ./get_dht_data.h ./get_dht_data.c $(pkg-config --libs --cflags libmongoc-1.0) -lwiringPi
-
-# Generate a new crontab job.
-CRON_CMD="$CUR_DIR/run_create_dht_reading.sh"
+# Generate a new crontab jobs to send data to the database.
+CRON_CMD="$CUR_DIR/run_send_dht_data.sh"
 CRON_JOB="*/$N_MINUTES_PER_DATAPOINT * * * * $CRON_CMD"
 ( crontab -l | grep -v -F "$CRON_CMD" ; echo "$CRON_JOB" ) | crontab -
+
+# Stop any old running instance of the data collection program and start the newly compiled one.
+pkill get_dht_data
+./run_get_dht_data.sh

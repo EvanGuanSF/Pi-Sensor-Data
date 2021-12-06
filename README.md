@@ -17,7 +17,7 @@ https://gist.github.com/JammyPajamies/9f06f00c1732c582c9714c603fb58f4b
 ### Installation:
 Build the program, configure the run scripts, and add a crontab job for run script execution:<br>
 ```./install.sh -u mongodb_username -p mongodb-password -h mongodb_hostname -d database_name -c collection_name -n n_minutes_per_datapoint -w wiring_pi_data_pin```<br>
-The program should now get sensor data from the pin every n_minutes_per_datapoint minutes and write that data to your mongodb server.
+The program should now attempt to get sensor data every 3 seconds from the wiring_pi_data_pin and should try to upload data every n_minutes_per_datapoint minutes to your mongodb server.
 ---
 To check if the cronjob is active, run:
 ```sudo crontab -l```

@@ -145,7 +145,7 @@ int main(int argc, char *argv[]) {
       puts("Opening file.");
       char file_name[128] = "";
       strcpy(file_name, getenv("HOME"));
-      strcat(file_name, "/.pi_sensor_data/dht.txt");
+      strcat(file_name, "/.pi_sensor_data/dht_data.txt");
       
       FILE *output_file;
       output_file = fopen(file_name, "w");

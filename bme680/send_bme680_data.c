@@ -1,4 +1,5 @@
 #include <mongoc/mongoc.h>
+#include <sys/file.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -87,7 +88,6 @@ int main(int argc, char *argv[]) {
   // Setup time constructs.
   time_t seconds;
   seconds = time(&seconds);
-
   // Floor to closest n minutes.
   uint32_t closest = n_minutes_per_datapoint * 60;
   int64_t timestamp_ms = (int64_t) ((int64_t)(seconds / closest) * closest) * 1000;
@@ -100,18 +100,23 @@ int main(int argc, char *argv[]) {
   
   char file_name[128] = "";
   strcpy(file_name, getenv("HOME"));
-  strcat(file_name, "/.pi_sensor_data/dht.txt");
+  strcat(file_name, "/.pi_sensor_data/bme680_data.txt");
   puts(file_name);
 
   // Get the data from the file. We are going to assume that the format is "field_name_string:sensor_data_double".
+  // Acquire a lock and open the file for reading.
   FILE *input_file;
   input_file = fopen(file_name, "r");
+  if (flock(fileno(input_file), LOCK_EX) < 0) {
+    puts("Failed to get a lock for the file ~/.pi_sensor_data/bme680_data.txt\n");
+    return 0;
+  }
   const int buffer_size = 256;
   char buffer[buffer_size];
   
   // Check if file exists
   if (input_file == NULL) {
-    puts("Could not open file ~/.pi_sensor_data/dht.txt\n");
+    puts("Could not open file ~/.pi_sensor_data/bme680_data.txt\n");
     return 0;
   }
 
@@ -143,6 +148,8 @@ int main(int argc, char *argv[]) {
     tok_index = 0;
   }
 
+  // Release the lock and close the file.
+  int release = flock(fileno(input_file), LOCK_UN);
   fclose(input_file);
 
   printf("Inserting: %s\n", bson_as_json(&insert, NULL));

@@ -6,8 +6,8 @@
 Help()
 {
   # Display Help
-  echo "Digital Temperature and Humidity mongo_db logging program configuration and build script."
-  echo "Syntax: install_create_dht_reading.sh [-h] <-upldcn>"
+  echo "Bosch Sensortec BME680 mongo_db logging program configuration and build script."
+  echo "Syntax: install_create_bme_reading.sh [-h] <-upldcn>"
   echo "options:"
   echo "h	help."
   echo "requirements:"
@@ -17,7 +17,6 @@ Help()
   echo "d	database_name."
   echo "c	collection_name."
   echo "n	n_minutes_per_datapoint."
-  echo "w	wiring_pi_dht_data_pin."
   echo
 }
 
@@ -27,8 +26,6 @@ Help()
 ############################################################
 ############################################################
 
-# ./install_create_dht_reading.sh -u admin -p passwd -l pidb.hopto.me -d pi_sensor_data -c test1 -n 5
-
 # Set up variables.
 CUR_DIR=$(pwd)
 MONGODB_USERNAME=""
@@ -37,10 +34,9 @@ MONGODB_HOSTNAME=""
 DATABASE_NAME=""
 COLLECTION_NAME=""
 N_MINUTES_PER_DATAPOINT=""
-WIRING_PI_DHT_DATA_PIN=""
 
 # Check for help option.
-while getopts ":hu:p:l:d:c:n:w:" option; do
+while getopts ":hu:p:l:d:c:n:" option; do
   case $option in
     h) # display Help and exit.
       Help
@@ -63,9 +59,6 @@ while getopts ":hu:p:l:d:c:n:w:" option; do
       ;;
     n)
       N_MINUTES_PER_DATAPOINT="$OPTARG"
-      ;;
-    w)
-      WIRING_PI_DHT_DATA_PIN="$OPTARG"
       ;;
     \?) # Invalid option
       echo "Error: Invalid option"
@@ -100,10 +93,6 @@ if [[ $N_MINUTES_PER_DATAPOINT == "" ]]; then
   echo "Error: n_minutes_per_datapoint required."
   PARAMS_OK=1
 fi
-if [[ $WIRING_PI_DHT_DATA_PIN == "" ]]; then
-  echo "Error: wiring_pi_dht_data_pin required."
-  PARAMS_OK=1
-fi
 
 if [[ $PARAMS_OK == "1" ]]; then
   echo
@@ -111,35 +100,29 @@ if [[ $PARAMS_OK == "1" ]]; then
   exit 1
 fi
 
-# Clear old files.
-# Remove the old singleton file if possible.
-rm ~/.pi_sensor_data/dht.txt
+# Remove the old data file if possible, and replace it with an empty one.
+rm -f ~/.pi_sensor_data/bme680_data.txt
+touch ~/.pi_sensor_data/bme680_data.txt
 
-# Build the programs.
+# Build the program that sends data to the database.
+gcc -o send_bme680_data ./send_bme680_data.c $(pkg-config --libs --cflags libmongoc-1.0)
+
+# Create the run script.
 # One to get the data.
-gcc -o get_dht_data ./get_dht_data.c -lwiringPi
+echo "nohup python3 "$CUR_DIR"/get_bme680_data.py >/dev/null 2>&1 &" > "$CUR_DIR"/run_get_bme680_data.sh
 # And one to send it to the database.
-gcc -o send_dht_data ./send_dht_data.c $(pkg-config --libs --cflags libmongoc-1.0)
+echo ""$CUR_DIR"/send_bme680_data \""$MONGODB_USERNAME"\" \""$MONGODB_PASSWORD"\" \""$MONGODB_HOSTNAME"\" \
+\""$DATABASE_NAME"\" \""$COLLECTION_NAME"\" \""$N_MINUTES_PER_DATAPOINT"\"" > "$CUR_DIR"/run_send_bme680_data.sh
 
-
-# Create the run scripts.
-# One to get the data.
-echo "nohup "$CUR_DIR"/get_dht_data \""$WIRING_PI_DHT_DATA_PIN"\" >/dev/null 2>&1 &" > "$CUR_DIR"/run_get_dht_data.sh
-# And one to send it to the database.
-echo ""$CUR_DIR"/send_dht_data \""$MONGODB_USERNAME"\" \""$MONGODB_PASSWORD"\" \""$MONGODB_HOSTNAME"\" \
-\""$DATABASE_NAME"\" \""$COLLECTION_NAME"\" \""$N_MINUTES_PER_DATAPOINT"\"" > "$CUR_DIR"/run_send_dht_data.sh
-
-chmod +x "$CUR_DIR"/run_get_dht_data.sh
-chmod +x "$CUR_DIR"/run_send_dht_data.sh
-
-# Get the current directory.
-CUR_PATH=$(pwd)
+chmod +x "$CUR_DIR"/run_get_bme680_data.sh
+chmod +x "$CUR_DIR"/run_send_bme680_data.sh
 
 # Generate a new crontab jobs to send data to the database.
-CRON_CMD="$CUR_DIR/run_send_dht_data.sh"
+# Overwrite the old one if it exists.
+CRON_CMD="$CUR_DIR/run_send_bme680_data.sh"
 CRON_JOB="*/$N_MINUTES_PER_DATAPOINT * * * * $CRON_CMD"
 ( crontab -l | grep -v -F "$CRON_CMD" ; echo "$CRON_JOB" ) | crontab -
 
 # Stop any old running instance of the data collection program and start the newly compiled one.
-pkill get_dht_data
-./run_get_dht_data.sh
+pkill -f ".*get_bme680_data.py"
+./run_get_bme680_data.sh

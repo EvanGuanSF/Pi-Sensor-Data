@@ -1,4 +1,5 @@
 import time
+import datetime
 from pathlib import Path
 import fcntl
 
@@ -43,6 +44,10 @@ x = 0
 big_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 28)
 sml_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16)
 
+# Status dot to indicate visually if the program is running correctly.
+activity_dot_toggle = True
+activity_dot_size = 3
+
 while True:
     # Do a wait at the start of the loop in case 
     time.sleep(1)
@@ -53,23 +58,31 @@ while True:
     # Possible race condition between reading and writing to/from the data file.
     # Try to get a lock on the data file and then read data.
     data_file_name = str(Path.home()) + '/.pi_sensor_data/bme680_data.txt'
-    with open(data_file_name, 'r+') as data_file:
-        fcntl.flock(data_file, fcntl.LOCK_EX)
+    # Try to read data until successful.
+    data_read = False
+    while (data_read is False):
+        with open(data_file_name, 'r+') as data_file:
+            fcntl.flock(data_file, fcntl.LOCK_EX)
 
-        # Try to read data until successful.
-        data_read = False
-        while (data_read is False):
             try:
                 temp = float(data_file.readline().rstrip().split(':')[1])
                 hum = float(data_file.readline().rstrip().split(':')[1])
             except:
-                print(time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()) + ': File read error occured, trying again...')
-                time.sleep(0.01)
+                print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ': File read error occured, trying again...')
+                time.sleep(0.1)
             else:
                 data_read = True
 
-        fcntl.flock(data_file, fcntl.LOCK_UN)
-        data_file.close()
+            fcntl.flock(data_file, fcntl.LOCK_UN)
+            data_file.close()
+
+    # Draw program activity status dot
+    if activity_dot_toggle:
+        draw.rectangle((width - activity_dot_size, height - activity_dot_size, width, height), outline=255, fill=255)
+        activity_dot_toggle = False
+    else:
+        draw.rectangle((width - activity_dot_size, height - activity_dot_size, width, height), outline=0, fill=0)
+        activity_dot_toggle = True
 
     # Write two lines of text to the buffer.
     draw.text((x + 1, top + 1), str('{0:.1f}'.format(temp * 1.8 + 32)) + "°F", font=big_font, fill=255)

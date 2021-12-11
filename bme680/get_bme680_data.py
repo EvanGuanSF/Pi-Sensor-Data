@@ -18,7 +18,7 @@ sensor.set_humidity_oversample(bme680.OS_2X)
 sensor.set_pressure_oversample(bme680.OS_4X)
 sensor.set_temperature_oversample(bme680.OS_8X)
 sensor.set_filter(bme680.FILTER_SIZE_3)
-sensor.set_gas_status(bme680.DISABLE_GAS_MEAS)
+sensor.set_gas_status(bme680.ENABLE_GAS_MEAS)
 
 sensor.set_gas_heater_temperature(320)
 sensor.set_gas_heater_duration(150)
@@ -39,7 +39,9 @@ try:
             with open(data_file_name, 'w') as data_file:
                 fcntl.flock(data_file, fcntl.LOCK_EX)
                 data_file.write('temperature_c:{0:.2f}\n'.format(sensor.data.temperature) +
-                    'relative_humidity:{0:.2f}\n'.format(sensor.data.humidity))
+                    'relative_humidity:{0:.2f}\n'.format(sensor.data.humidity) +
+                    'pressure_hpa:{0:.2f}\n'.format(sensor.data.pressure) +
+                    'gas_resistance_ohms:{0:.2f}\n'.format(sensor.data.gas_resistance))
                 fcntl.flock(data_file, fcntl.LOCK_UN)
                 data_file.close()
 

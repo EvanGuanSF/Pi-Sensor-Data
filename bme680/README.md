@@ -17,7 +17,7 @@ We need the mongoc driver to access MongoDB databases. Build and install it as p
 ```http://mongoc.org/libmongoc/current/installing.html#build-environment-on-unix```<br>
 
 If you wish to build and utilize a MongoDB server on your Raspberry Pi 4 (64 bit OS required), I have a written guide here:<br>
-https://gist.github.com/JammyPajamies/9f06f00c1732c582c9714c603fb58f4b
+https://gist.github.com/EvanGuanSF/9f06f00c1732c582c9714c603fb58f4b
 
 ---
 ### Installation:

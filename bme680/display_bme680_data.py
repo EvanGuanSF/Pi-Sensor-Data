@@ -1,3 +1,6 @@
+from gpiozero import DistanceSensor
+from gpiozero.pins.pigpio import PiGPIOFactory
+import math
 import time
 import datetime
 from pathlib import Path
@@ -48,47 +51,72 @@ sml_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 activity_dot_toggle = True
 activity_dot_size = 3
 
+factory = PiGPIOFactory()
+
+trig_pin = 23
+echo_pin = 24
+dist_sensor = DistanceSensor(echo = echo_pin, trigger = trig_pin, pin_factory = factory)
+seconds_to_activate = 5
+run_until_time = 0
+distance_cm = 0.0
+time_between_samples = 0.05
+showing = False
+
 while True:
-    # Do a wait at the start of the loop in case 
-    time.sleep(1)
+    distance_cm = dist_sensor.distance * 100
+    print('Distance: {0}cm'.format(distance_cm))
+    if distance_cm <= 10.0:
+        run_until_time = math.floor(time.time() * 1000) + seconds_to_activate * 1000
+        showing = True
+    if not showing:
+        # Draw a black filled box to clear the image.
+        draw.rectangle((0, 0, width, height), outline=0, fill=0)
+        disp.image(image)
+        disp.show()
 
-    # Draw a black filled box to clear the image.
-    draw.rectangle((0, 0, width, height), outline=0, fill=0)
+    if showing and math.floor(time.time() * 1000) <= run_until_time:
+        # Draw a black filled box to clear the image.
+        draw.rectangle((0, 0, width, height), outline=0, fill=0)
 
-    # Possible race condition between reading and writing to/from the data file.
-    # Try to get a lock on the data file and then read data.
-    data_file_name = str(Path.home()) + '/.pi_sensor_data/bme680_data.txt'
-    # Try to read data until successful.
-    data_read = False
-    while (data_read is False):
-        with open(data_file_name, 'r+') as data_file:
-            fcntl.flock(data_file, fcntl.LOCK_EX)
+        # Possible race condition between reading and writing to/from the data file.
+        # Try to get a lock on the data file and then read data.
+        data_file_name = str(Path.home()) + '/.pi_sensor_data/bme680_data.txt'
+        # Try to read data until successful.
+        data_read = False
+        while (data_read is False):
+            with open(data_file_name, 'r+') as data_file:
+                fcntl.flock(data_file, fcntl.LOCK_EX)
 
-            try:
-                temp = float(data_file.readline().rstrip().split(':')[1])
-                hum = float(data_file.readline().rstrip().split(':')[1])
-            except:
-                print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ': File read error occured, trying again...')
-                time.sleep(0.1)
-            else:
-                data_read = True
+                try:
+                    temp = float(data_file.readline().rstrip().split(':')[1])
+                    hum = float(data_file.readline().rstrip().split(':')[1])
+                except:
+                    print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ': File read error occured, trying again...')
+                    time.sleep(0.1)
+                else:
+                    data_read = True
 
-            fcntl.flock(data_file, fcntl.LOCK_UN)
-            data_file.close()
+                fcntl.flock(data_file, fcntl.LOCK_UN)
+                data_file.close()
 
-    # Draw program activity status dot
-    if activity_dot_toggle:
-        draw.rectangle((width - activity_dot_size, height - activity_dot_size, width, height), outline=255, fill=255)
-        activity_dot_toggle = False
-    else:
-        draw.rectangle((width - activity_dot_size, height - activity_dot_size, width, height), outline=0, fill=0)
-        activity_dot_toggle = True
+        # Draw program activity status dot
+        if activity_dot_toggle:
+            draw.rectangle((width - activity_dot_size, height - activity_dot_size, width, height), outline=255, fill=255)
+            activity_dot_toggle = False
+        else:
+            draw.rectangle((width - activity_dot_size, height - activity_dot_size, width, height), outline=0, fill=0)
+            activity_dot_toggle = True
 
-    # Write two lines of text to the buffer.
-    draw.text((x + 1, top + 1), str('{0:.1f}'.format(temp * 1.8 + 32)) + "°F", font=big_font, fill=255)
-    draw.text((x + 1, top + 1 + 30), str('{0:.1f}'.format(temp)) + "°C", font=sml_font, fill=255)
-    draw.text((x + 1, top + 1 + 30 + 18), str('{0:.1f}'.format(hum)) + "%RH", font=sml_font, fill=255)
+        # Write two lines of text to the buffer.
+        draw.text((x + 1, top + 1), str('{0:.1f}'.format(temp * 1.8 + 32)) + "°F", font=big_font, fill=255)
+        draw.text((x + 1, top + 1 + 30), str('{0:.1f}'.format(temp)) + "°C", font=sml_font, fill=255)
+        draw.text((x + 1, top + 1 + 30 + 18), str('{0:.1f}'.format(hum)) + "%RH", font=sml_font, fill=255)
 
-    # Display image buffer.
-    disp.image(image)
-    disp.show()
+        # Display image buffer.
+        disp.image(image)
+        disp.show()
+        time.sleep(1 - time_between_samples)
+    if showing and math.floor(time.time() * 1000) > run_until_time:
+        showing = False
+
+    time.sleep(time_between_samples)

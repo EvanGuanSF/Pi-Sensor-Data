@@ -1,0 +1,12 @@
+[Unit]
+Description=BME680 Sensor Data Sender Startup
+After=network.target
+After=bme680.service
+
+[Service]
+Type=forking
+KillMode=process
+ExecStart=/bin/bash /usr/local/sbin/bme680/bme680-send-startup.sh
+
+[Install]
+WantedBy=network.target

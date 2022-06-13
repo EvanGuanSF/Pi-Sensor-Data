@@ -1,16 +1,52 @@
+#include <errno.h>
 #include <mongoc/mongoc.h>
-#include <sys/file.h>
-#include <stdlib.h>
-#include <stdio.h>
+#include <semaphore.h>
+#include <signal.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
+
+// Interrupt flag.
+volatile sig_atomic_t exitFlag = 0;
+// MMap constants.
+const char SHARED_PATH[] = "/bme680_data";
+const int32_t NUM_DATA_POINTS = 4;
+const int32_t SHARED_BYTES = NUM_DATA_POINTS * sizeof(double);
+const u_int32_t PERMISSIONS = 400;
+const long NANO_SLEEP_DURATION = 10000000;
+const char *FIELD_NAMES[] = {"temperature_c", "relative_humidity",
+                             "pressure_hpa", "gas_resistance_ohms"};
+
+void handleSigInt(int sig) {
+  printf("\nSignal %d received, exiting...\n", sig);
+  exitFlag = 1;
+}
+
+void cleanup(void **sharedMemory, sem_t **sharedSemaphore,
+             int64_t *fileDescriptor) {
+  // Remove handles to memory, file descriptor, and semaphore.
+  printf("Cleaning up sM: %p, sS: %p, fd: %d\n", *sharedMemory, *sharedSemaphore,
+         *fileDescriptor);
+  sleep(1);
+  munmap(*sharedMemory, (size_t)SHARED_BYTES);
+  close(*fileDescriptor);
+  sem_close(*sharedSemaphore);
+
+  exit(0);
+}
 
 int send_sensor_data(char *db_credentials[], bson_t *insert) {
   printf("Attempting to write sensor data to DB...\n");
 
   int32_t max_uri_length = 250;
   char *uri_string = malloc(max_uri_length * sizeof(char));
-  snprintf(uri_string, max_uri_length, "mongodb://%s:%s@%s", db_credentials[0], db_credentials[1], db_credentials[2]);
+  snprintf(uri_string, max_uri_length, "mongodb://%s:%s@%s", db_credentials[0],
+           db_credentials[1], db_credentials[2]);
 
   puts(uri_string);
 
@@ -26,12 +62,11 @@ int send_sensor_data(char *db_credentials[], bson_t *insert) {
 
   // Safely create a MongoDB URI object from the given string
   uri = mongoc_uri_new_with_error(uri_string, &error);
-  if(!uri) {
-    fprintf (stderr,
-              "failed to parse URI: %s\n"
-              "error message:       %s\n",
-              uri_string,
-              error.message);
+  if (!uri) {
+    fprintf(stderr,
+            "failed to parse URI: %s\n"
+            "error message:       %s\n",
+            uri_string, error.message);
     return 1;
   }
 
@@ -43,7 +78,8 @@ int send_sensor_data(char *db_credentials[], bson_t *insert) {
 
   // Get a handle on the database and collection
   database = mongoc_client_get_database(client, db_credentials[3]);
-  collection = mongoc_client_get_collection(client, db_credentials[3], db_credentials[4]);
+  collection = mongoc_client_get_collection(client, db_credentials[3],
+                                            db_credentials[4]);
 
   printf("Inserting: %s\n", bson_as_json(insert, NULL));
 
@@ -68,94 +104,93 @@ int send_sensor_data(char *db_credentials[], bson_t *insert) {
 
 int main(int argc, char *argv[]) {
   // Check for proper amount of arguments provided.
-  if(argc != 7) {
+  if (argc != 7) {
     printf("Invalid number of args provided: %d\n", argc - 1);
-    return 1;
+    exit(EXIT_FAILURE);
+  }
+
+  sem_t *sharedSemaphore = sem_open(SHARED_PATH, 0);
+  if (sharedSemaphore == SEM_FAILED) {
+    printf("Creating the semaphore failed; errno is %d\n", errno);
+    exit(EXIT_FAILURE);
+  } else {
+    printf("Shared semaphore created/opened.\n");
+  }
+
+  // Link to shared memory.
+  int64_t fileDescriptor = shm_open(SHARED_PATH, O_RDONLY, PERMISSIONS);
+  printf("File descriptor: %d\n", fileDescriptor);
+  void *sharedMemory = NULL;
+
+  if (fileDescriptor == -1) {
+    printf("Creating the shared memory failed; errno is %d", errno);
+    close(fileDescriptor);
+    exit(EXIT_FAILURE);
+  } else {
+    // MMap the shared memory
+    sharedMemory = mmap((void *)0, (size_t)SHARED_BYTES, PROT_READ,
+                        MAP_PRIVATE, fileDescriptor, 0);
+
+    if (sharedMemory == MAP_FAILED) {
+      sharedMemory = NULL;
+      printf("MMapping the shared memory failed; errno is %d\n", errno);
+      close(fileDescriptor);
+      exit(EXIT_FAILURE);
+    }
   }
 
   // Setup document insertion function details.
   char *db_credentials[5];
-  for(int i = 1; i < 6; i++)
-    db_credentials[i - 1] = argv[i];
+  for (int i = 1; i < 6; i++) db_credentials[i - 1] = argv[i];
 
-  // Get the number of minutes to wait between sensor readings from the arguments.
-  uint32_t n_minutes_per_datapoint = abs(strtoul(argv[6], NULL, 10));
-  if(n_minutes_per_datapoint == 0) {
-    printf("Invalid minutes_per_sample parameter, defaulting to 5 minute interval.\n");
-    n_minutes_per_datapoint = 5;
+  // Get the number of seconds to wait between sensor readings from the
+  // arguments.
+  uint32_t n_seconds_per_datapoint = abs(strtoul(argv[6], NULL, 10));
+  if (n_seconds_per_datapoint == 0) {
+    printf(
+        "Invalid seconds_per_sample parameter, defaulting to 5 minute "
+        "interval.\n");
+    n_seconds_per_datapoint = 300;
   }
 
   // Setup time constructs.
   time_t seconds;
-  seconds = time(&seconds);
-  // Floor to closest n minutes.
-  uint32_t closest = n_minutes_per_datapoint * 60;
-  int64_t timestamp_ms = (int64_t) ((int64_t)(seconds / closest) * closest) * 1000;
+  seconds = time(NULL);
+  // Default timestamp to the current milisecond.
+  int64_t timestamp_ms = (int64_t)seconds * 1000;
+  // Floor timestamp to closest n minutes if a minute interval is provided.
+  if (n_seconds_per_datapoint >= 60) {
+    uint32_t closest = n_seconds_per_datapoint;
+    timestamp_ms = (int64_t)((int64_t)(seconds / closest) * closest) * 1000;
+  }
 
   // Prep a new BSON document for insertion.
   bson_t insert;
-  bson_init (&insert);
+  bson_init(&insert);
   BSON_APPEND_DATE_TIME(&insert, "timestamp", timestamp_ms);
+  double sensorDataPoints[NUM_DATA_POINTS];
 
-  
-  char file_name[128] = "";
-  strcpy(file_name, getenv("HOME"));
-  strcat(file_name, "/.pi_sensor_data/bme680_data.txt");
-  puts(file_name);
-
-  // Get the data from the file. We are going to assume that the format is "field_name_string:sensor_data_double".
-  // Acquire a lock and open the file for reading.
-  FILE *input_file;
-  input_file = fopen(file_name, "r");
-  if (flock(fileno(input_file), LOCK_EX) < 0) {
-    puts("Failed to get a lock for the file ~/.pi_sensor_data/bme680_data.txt\n");
-    return 0;
+  // Copy the sensor data first.
+  sem_wait(sharedSemaphore);
+  for (int32_t i = 0; i < NUM_DATA_POINTS; i++) {
+    memcpy(&sensorDataPoints[i], sharedMemory + i * sizeof(double),
+           sizeof(double));
   }
-  const int buffer_size = 256;
-  char buffer[buffer_size];
-  
-  // Check if file exists
-  if (input_file == NULL) {
-    puts("Could not open file ~/.pi_sensor_data/bme680_data.txt\n");
-    return 0;
+  sem_post(sharedSemaphore);
+
+  // Then copy the field names and data into the BSON insert.
+  for (int32_t i = 0; i < NUM_DATA_POINTS; i++) {
+    BSON_APPEND_DOUBLE(&insert, FIELD_NAMES[i], sensorDataPoints[i]);
   }
 
-  // Read the file line by line and set BSON data.
-  int tok_index = 0;
-  char *field_name;
-  double data = 0.0;
-
-  while(fgets(buffer, buffer_size - 1, (FILE*)input_file)) {
-    char *token = strtok(buffer, ":");
-    // Get the data for the current line.
-    // We will assume that the datatype is double.
-    while(token != NULL) {
-      if(tok_index == 0)
-        field_name = token;
-      else
-        data = strtod(token, NULL);
-
-      token = strtok(NULL, buffer);
-      ++tok_index;
-    }
-
-    // Add it to the BSON document.
-    BSON_APPEND_DOUBLE(&insert, field_name, data);
-
-    // Reset data vars.
-    field_name = "";
-    data = 0.0;
-    tok_index = 0;
-  }
-
-  // Release the lock and close the file.
-  int release = flock(fileno(input_file), LOCK_UN);
-  fclose(input_file);
-
+  // Insert to the db and then cleanup.
   printf("Inserting: %s\n", bson_as_json(&insert, NULL));
-
   send_sensor_data(db_credentials, &insert);
   bson_destroy(&insert);
 
-  return 0;
+  // Unlink memory and semaphore.
+  munmap(sharedMemory, (size_t)SHARED_BYTES);
+  sem_close(sharedSemaphore);
+
+  exit(EXIT_SUCCESS);
 }

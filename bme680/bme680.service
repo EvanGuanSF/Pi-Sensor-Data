@@ -1,0 +1,10 @@
+[Unit]
+Description=BME680 Sensor Reader
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/sbin/bme680/get_bme680_data.py
+
+[Install]
+WantedBy=network.target
+RequiredBy=bme680-send.service
